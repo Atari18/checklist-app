@@ -10,6 +10,17 @@ from PySide6.QtWidgets import (
 
 from ui.my_form import Ui_MainWindow
 
+import sys
+import os
+
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(os.path.dirname(__file__))
+
+    return os.path.join(base_path, relative_path)
+
 
 class MainWindow(QMainWindow, Ui_MainWindow):
     def __init__(self):
@@ -72,12 +83,17 @@ class MainWindow(QMainWindow, Ui_MainWindow):
     @staticmethod
     def load_fonts():
         """Loads custom fonts from the 'fonts' directory."""
-        font_dir = "fonts"
+
+        font_dir = resource_path("fonts")
+        print(f"Looking for fonts in: {font_dir}")
         if os.path.isdir(font_dir):
             for filename in os.listdir(font_dir):
                 if filename.endswith((".ttf", ".otf")):
                     font_path = os.path.join(font_dir, filename)
+                    print(f"Adding font: {font_path}")
                     QFontDatabase.addApplicationFont(font_path)
+        else:
+            print(f"Font directory not found: {font_dir}")
 
     @staticmethod
     def get_data_path():
@@ -146,7 +162,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         self.in_progress_scroll_content_layout.addWidget(checkbox)
 
     def create_completed_label(self, display_text):
-        """Helper function to create and add a completed item label."""
+        """Helper function to create and add a completed item label alphabetically."""
         label = QLabel(display_text)
         font = QFont()
         font.setPointSize(11)
@@ -155,8 +171,22 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         label.setMargin(5)
         label.setWordWrap(True)
         label.setCursor(Qt.CursorShape.PointingHandCursor)
-        label.mousePressEvent = lambda _, lb=label: self.label_selected(lb)
-        self.completed_scroll_content_layout.addWidget(label)
+        label.mousePressEvent = lambda event, lb=label: self.label_selected(lb)
+
+        # --- Insertion Logic for Alphabetical Order ---
+        insert_index = 0
+        new_text_lower = display_text.lower()
+
+        for i in range(self.completed_scroll_content_layout.count()):
+            widget = self.completed_scroll_content_layout.itemAt(i).widget()
+            if isinstance(widget, QLabel):
+                existing_text_lower = widget.text().lower()
+                if new_text_lower < existing_text_lower:
+                    insert_index = i
+                    break
+            insert_index = i + 1
+
+        self.completed_scroll_content_layout.insertWidget(insert_index, label)
 
     def edit_item_text(self, _, item):
         """Allows the user to edit the text of a to-do item."""
@@ -311,6 +341,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
             print(f"Error saving data: {e}")
             QMessageBox.critical(self, "Error", f"Could not save data.\nError: {e}")
 
+
     def load_data(self):
         """Loads the checklist data from a file."""
         data_path = self.get_data_path()
@@ -321,6 +352,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                 with open(data_path, "r") as f:
                     lines = f.readlines()
                     mode = None
+                    categories_list = [] # Temporary list to store categories
+
                     for line in lines:
                         line = line.strip()
                         if line == "Categories:":
@@ -331,8 +364,7 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                             mode = "completed"
                         elif mode == "categories":
                             category_name = line
-                            self.progress_catagory.addItem(category_name)
-                            self.completed_catagory.addItem(category_name)
+                            categories_list.append(category_name) # Add to list
                             if category_name not in self.category_items:
                                 self.category_items[category_name] = []
 
@@ -343,10 +375,8 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                             full_item_text, checked_str = parts
                             checked = checked_str.lower() == "true"
 
-                            display_text = full_item_text.split(" [")[
-                                0] if " [" in full_item_text else full_item_text
-                            category_part = full_item_text.split(" [")[1].replace("]",
-                                                                                  "") if " [" in full_item_text else "Uncategorized"
+                            display_text = full_item_text.split(" [")[0] if " [" in full_item_text else full_item_text
+                            category_part = full_item_text.split(" [")[1].replace("]", "") if " [" in full_item_text else "Uncategorized"
 
                             if checked:
                                 self.create_completed_label(display_text)
@@ -359,18 +389,20 @@ class MainWindow(QMainWindow, Ui_MainWindow):
 
                         elif mode == "completed":
                             full_item_text = line
-                            display_text = full_item_text.split(" [")[
-                                0] if " [" in full_item_text else full_item_text
+                            display_text = full_item_text.split(" [")[0] if " [" in full_item_text else full_item_text
                             self.create_completed_label(display_text)
-                            category_part = full_item_text.split(" [")[1].replace("]",
-                                                                                  "") if "[" in full_item_text else "Uncategorized"
+                            category_part = full_item_text.split(" [")[1].replace("]", "") if "[" in full_item_text else "Uncategorized"
 
                             if category_part not in self.category_items:
                                 self.category_items[category_part] = []
 
                             if full_item_text not in self.category_items[category_part]:
                                 self.category_items[category_part].append(full_item_text)
-
+                    # Sort and add categories after reading them all
+                    categories_list.sort(key=str.lower) # Sort alphabetically (case-insensitive)
+                    for category_name in categories_list:
+                        self.progress_catagory.addItem(category_name)
+                        self.completed_catagory.addItem(category_name)
             else:
                 print(f"Data file not found: {data_path}")
 
@@ -430,14 +462,13 @@ class MainWindow(QMainWindow, Ui_MainWindow):
         event.accept()
 
     def add_category(self):
-        """Adds a new category to the ComboBoxes."""
+        """Adds a new category to the ComboBoxes, maintaining alphabetical order."""
         new_category_text, ok = QInputDialog.getText(
             self, "Add Category", "Enter category name:"
         )
         if ok and new_category_text:
             new_category_text = new_category_text.strip()
             if new_category_text:
-                # Check for duplicates (in both ComboBoxes)
                 if (new_category_text in [self.progress_catagory.itemText(i) for i in
                                           range(self.progress_catagory.count())] or
                         new_category_text in [self.completed_catagory.itemText(i) for i in
@@ -445,10 +476,27 @@ class MainWindow(QMainWindow, Ui_MainWindow):
                     QMessageBox.warning(self, "Warning", "Category already exists.")
                     return
 
-                self.progress_catagory.addItem(new_category_text)
-                self.completed_catagory.addItem(new_category_text)  # Add to both
-                new_index = self.progress_catagory.count() - 1
-                self.progress_catagory.setCurrentIndex(new_index)  # Focus on the new category
+                # --- Insert alphabetically into progress_catagory ---
+                inserted = False
+                for i in range(self.progress_catagory.count()):
+                    if new_category_text.lower() < self.progress_catagory.itemText(i).lower():
+                        self.progress_catagory.insertItem(i, new_category_text)
+                        inserted = True
+                        break
+                if not inserted:
+                    self.progress_catagory.addItem(new_category_text)
+                self.progress_catagory.setCurrentText(new_category_text)  # Set as current
+
+                # --- Insert alphabetically into completed_catagory ---
+                inserted = False
+                for i in range(self.completed_catagory.count()):
+                    if new_category_text.lower() < self.completed_catagory.itemText(i).lower():
+                        self.completed_catagory.insertItem(i, new_category_text)
+                        inserted = True
+                        break
+                if not inserted:
+                    self.completed_catagory.addItem(new_category_text)
+
 
             else:
                 QMessageBox.warning(self, "Warning", "Category name cannot be empty.")
